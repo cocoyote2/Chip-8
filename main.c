@@ -9,15 +9,9 @@
 #define HEIGHT 32
 #define SCALE 20
 #define MEMORY_SIZE 4096
-#define CLS 0x00E0
-#define JMP 0x1000
-#define SET_RG 0x6
-#define ADD_VAL 0x7
-#define SET_IND 0xA
-#define DSPL 0xD
 
-void Init(unsigned char* ram, unsigned char* registers, unsigned short *PC, unsigned short *I, unsigned short *stack, 
-unsigned int *delay_timer, unsigned int *sound_timer);
+void Init(unsigned char* ram, unsigned char *display, unsigned char* registers, unsigned short *PC, unsigned short *I, unsigned short *stack, 
+unsigned int *delay_timer, unsigned int *sound_timer, unsigned char *sp);
 
 void Fetch(unsigned short *opcode, unsigned char *ram, unsigned short *PC);
 
@@ -36,6 +30,10 @@ bool LoadRom(unsigned char *ram);
 void Decode(unsigned char *display, unsigned char *ram, unsigned char *registers, 
 unsigned short *I, unsigned short *PC, unsigned short opcode, SDL_Renderer *renderer);
 
+void UpdateTimers(unsigned int *delay_timer, unsigned int *sound_timer);
+
+bool InitSDL(SDL_Window *window, SDL_Renderer *renderer, SDL_Texture *texture);
+
 int main(int argc, char *argv[])
 {
     unsigned char ram[MEMORY_SIZE];
@@ -43,11 +41,12 @@ int main(int argc, char *argv[])
     //PC indicates where is the instruction
     unsigned short PC;
     unsigned short I;
-    unsigned short stack;
+    unsigned short stack[16];
+    unsigned char sp;
     unsigned int delay_timer;
     unsigned int sound_timer;
     unsigned short opcode;
-    unsigned char display[WIDTH*HEIGHT];
+    unsigned char display[WIDTH*HEIGHT] = {0};
     SDL_Window *window;
     SDL_Renderer *renderer;
     SDL_Texture *texture;
@@ -73,43 +72,77 @@ int main(int argc, char *argv[])
         0xF0, 0x80, 0xF0, 0x80, 0x80  // F
     };
 
-    Init(ram, registers, &PC, &I, &stack, &delay_timer, &sound_timer);
+    Init(ram, registers, display,&PC, &I, stack, &delay_timer, &sound_timer, &sp);
 
-    if(SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_TIMER) == 0){
-        window = SDL_CreateWindow("Chip-8", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, WIDTH*SCALE, HEIGHT*SCALE, SDL_WINDOW_RESIZABLE);  
-        if(!window){
+    memcpy(ram + 0x050, font, sizeof(font));
+
+    if (LoadRom(ram))
+    {
+        printf("Rom loaded !\n");
+        fflush(stdout); // Force l'affichage immédiat
+        printf("Contenu de la RAM après le chargement de la ROM :\n");
+        fflush(stdout); // Force l'affichage immédiat
+        for (int i = 0x200; i < 0x210; i++)
+        {
+            printf("0x%04x: 0x%02X\n", i, ram[i]);
+            fflush(stdout); // Force l'affichage immédiat
+        }
+    }
+
+    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_TIMER) == 0)
+    {
+        window = SDL_CreateWindow("Chip-8", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, WIDTH * SCALE, HEIGHT * SCALE, SDL_WINDOW_RESIZABLE);
+        if (!window)
+        {
             printf("Unable to initialize window.");
+            fflush(stdout);
             SDL_Quit();
-            return 1;
-        } 
-        
+            return false;
+        }
+
         renderer = SDL_CreateRenderer(window, -1, 0);
-        if(!renderer){
+        if (!renderer)
+        {
             printf("Unable to initialize renderer");
+            fflush(stdout);
             SDL_Quit();
-            return 1;
+            return false;
         }
 
         texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_STREAMING, WIDTH, HEIGHT);
-        if(!texture){
+        if (!texture)
+        {
             SDL_DestroyRenderer(renderer);
             SDL_DestroyWindow(window);
             SDL_Quit();
-            return 1;   
+            return false;
         }
-    }else{
+    }
+    else
+    {
         printf("Unable to initialize SDL.\n");
+        fflush(stdout);
         SDL_DestroyRenderer(renderer);
         SDL_DestroyWindow(window);
+        return false;
     }
 
-    //Main loop
-    while(!quit){
+    const int TIMER_INTERVAL = 1000 / 60; // 1/60e de seconde en millisecondes
+    Uint32 last_timer_update = SDL_GetTicks();
+
+        // Main loop
+    while (!quit)
+    {
         SDL_Event event;
         while(SDL_PollEvent(&event)){
             handleEvents(event, &quit);
 
-            LoadRom(ram);
+            Uint32 current_time = SDL_GetTicks();
+            if (current_time - last_timer_update >= TIMER_INTERVAL)
+            {
+                UpdateTimers(&delay_timer, &sound_timer);
+                last_timer_update = current_time;
+            }
 
             Fetch(&opcode, ram, &PC);
 
@@ -122,10 +155,52 @@ int main(int argc, char *argv[])
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);
     SDL_Quit();
+
+    return 0;
 }
 
-void Init(unsigned char* ram, unsigned char* registers, unsigned short *PC, unsigned short *I, unsigned short *stack, 
-unsigned int *delay_timer, unsigned int *sound_timer){
+bool InitSDL(SDL_Window *window, SDL_Renderer *renderer, SDL_Texture *texture){
+    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_TIMER) == 0)
+    {
+        window = SDL_CreateWindow("Chip-8", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, WIDTH * SCALE, HEIGHT * SCALE, SDL_WINDOW_RESIZABLE);
+        if (!window)
+        {
+            printf("Unable to initialize window.");
+            fflush(stdout);
+            SDL_Quit();
+            return false;
+        }
+
+        renderer = SDL_CreateRenderer(window, -1, 0);
+        if (!renderer)
+        {
+            printf("Unable to initialize renderer");
+            fflush(stdout);
+            SDL_Quit();
+            return false;
+        }
+
+        texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_STREAMING, WIDTH, HEIGHT);
+        if (!texture)
+        {
+            SDL_DestroyRenderer(renderer);
+            SDL_DestroyWindow(window);
+            SDL_Quit();
+            return false;
+        }
+    }
+    else
+    {
+        printf("Unable to initialize SDL.\n");
+        fflush(stdout);
+        SDL_DestroyRenderer(renderer);
+        SDL_DestroyWindow(window);
+        return false;
+    }
+}
+
+void Init(unsigned char* ram, unsigned char *display, unsigned char* registers, unsigned short *PC, unsigned short *I, unsigned short *stack, 
+unsigned int *delay_timer, unsigned int *sound_timer, unsigned char *sp){
 
     for(int i=0;i<MEMORY_SIZE;i++){
         ram[i] = 0;
@@ -137,11 +212,13 @@ unsigned int *delay_timer, unsigned int *sound_timer){
 
     *PC = 0x200;
     *I = 0;
-    *stack = 0;
+    *sp = 0;
     *delay_timer = 0;
     *sound_timer = 0;
+    memset(display, 0, WIDTH * HEIGHT);
 
     printf("Fin de l'initialisation.");
+    fflush(stdout);
 }
 
 void Fetch(unsigned short *opcode, unsigned char *ram, unsigned short *PC){
@@ -156,32 +233,59 @@ void ClearScreen(SDL_Renderer *renderer){
     SDL_RenderClear(renderer);
 }
 
-void DrawSprite(unsigned char *display, unsigned char *ram ,unsigned short I, uint8_t VX, uint8_t VY, uint8_t N, unsigned char *VF){
-    uint8_t x = VX%WIDTH;
-    uint8_t y = VY%HEIGHT;
+void DrawSprite(unsigned char *display, unsigned char *ram, unsigned short I, uint8_t VX, uint8_t VY, uint8_t N, unsigned char *VF)
+{
+    uint8_t x = VX % WIDTH;
+    uint8_t y = VY % HEIGHT;
 
-    *VF = 0;
+    *VF = 0; // Réinitialiser VF avant de dessiner
 
-    for(int row=0;row<N;row++){
-        unsigned char sprite = ram[I+row];
+    for (int row = 0; row < N; row++)
+    {
+        // Vérifier les limites de la mémoire
+        if (I + row >= MEMORY_SIZE)
+        {
+            printf("Erreur : Lecture hors limite de la mémoire (I=%d, row=%d)\n", I, row);
+            break;
+        }
 
-        for(int col =0;col<8;col++){
-            if((sprite & (0x80 >> col)) != 0){
-                int index = (x + col + ((y + row) * WIDTH)) % (WIDTH * HEIGHT);
-                if(display[index] == 1){
-                    *VF = 1;
+        unsigned char sprite = ram[I + row];
+
+        for (int col = 0; col < 8; col++)
+        {
+            // Vérifier que les coordonnées sont dans les limites de l'écran
+            if (x + col < WIDTH && y + row < HEIGHT)
+            {
+                int index = (x + col) + ((y + row) * WIDTH);
+
+                if ((sprite & (0x80 >> col)) != 0)
+                { // Vérifier le bit correspondant
+                    if (display[index] == 1)
+                    {
+                        *VF = 1; // Collision détectée
+                    }
+                    display[index] ^= 1; // Inverser l'état du pixel
                 }
-                display[index] ^= 1;
             }
         }
     }
 }
 
-void DecrementTimer(unsigned int *timer){
-    while ((*timer) > 0)
+void UpdateTimers(unsigned int *delay_timer, unsigned int *sound_timer)
+{
+    if (*delay_timer > 0)
     {
-        (*timer)--;
-        SDL_Delay(16);
+        (*delay_timer)--;
+    }
+    if (*sound_timer > 0)
+    {
+        (*sound_timer)--;
+
+        // Jouer un son si sound_timer atteint 0
+        if (*sound_timer == 0)
+        {
+            printf("BEEP!\n"); // Remplacez par une bibliothèque audio pour jouer un vrai son
+        }
     }
 }
 
@@ -213,7 +317,7 @@ void handleEvents(SDL_Event event, bool *quit){
     switch (event.type)
     {
     case SDL_QUIT:
-        *quit = false;
+        *quit = true;
         break;
     
     default:
@@ -223,21 +327,23 @@ void handleEvents(SDL_Event event, bool *quit){
 }
 
 bool LoadRom(unsigned char *ram){
-    FILE *rom = fopen( "./IBM_Logo.ch8","rb");
+    FILE *rom = fopen("./test_opcode.ch8", "rb");
 
     if(rom == NULL){
         printf("Impossible d'ouvrir la rom.");
-        return 1;
+        return false;
     }
 
-    size_t rom_size = fread(ram + 0x200, sizeof(rom), MEMORY_SIZE - 0x200, rom);
+    size_t rom_size = fread(ram + 0x200, 1, MEMORY_SIZE - 0x200, rom);
+
     if(rom_size == 0){
         printf("Erreur dans la lecture de la rom.");
         fclose(rom);
-        return 1;
+        return false;
     }
 
     fclose(rom);
+    return true;
 }
 
 void Decode(unsigned char *display, unsigned char *ram, unsigned char *registers, 
@@ -249,7 +355,7 @@ unsigned short *I, unsigned short *PC, unsigned short opcode, SDL_Renderer *rend
     uint8_t NN = (opcode & 0x00FF);
     uint8_t NNN = (opcode & 0x0FFF);
 
-    switch(opcode & 0xF0)
+    switch(opcode & 0xF000)
     {
         case 0x0000:
             if(opcode == 0x00E0){
@@ -270,7 +376,7 @@ unsigned short *I, unsigned short *PC, unsigned short opcode, SDL_Renderer *rend
             *I = NNN;
             break;
         case 0xD000:
-            DrawSprite(display, ram, *I, X, Y, N, &registers[0xF]);
+            DrawSprite(display, ram, *I, registers[X], registers[Y], N, &registers[0xF]);
             updateScreen(renderer, display);
             break;
         default:
