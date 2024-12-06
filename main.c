@@ -4,6 +4,9 @@
 #include <string.h>
 #include <stdbool.h>
 #include <SDL2/SDL.h>
+#include <windows.h>
+#include <stdlib.h>
+#include <time.h>
 
 #define WIDTH 64
 #define HEIGHT 32
@@ -11,7 +14,7 @@
 #define MEMORY_SIZE 4096
 
 void Init(unsigned char *ram, unsigned char *display, unsigned char *registers, unsigned short *PC, unsigned short *I, unsigned short *stack,
-          unsigned int *delay_timer, unsigned int *sound_timer, unsigned char *sp,
+          unsigned int *delay_timer, unsigned int *sound_timer, unsigned char *stackPointer,
           unsigned short *opcode, unsigned char *font);
 
 bool LoadRom(unsigned char *ram);
@@ -19,9 +22,10 @@ bool LoadRom(unsigned char *ram);
 void Fetch(unsigned char *ram, unsigned short *opcode, unsigned short *PC);
 
 void Decode(unsigned short opcode, unsigned short *PC, unsigned char *registers, unsigned short *I,
-            unsigned char *display, SDL_Renderer **renderer, unsigned char *ram, SDL_Texture **texture, int pitch);
+            unsigned char *display, SDL_Renderer **renderer, unsigned char *ram, SDL_Texture **texture, int pitch,
+            unsigned short *stack, unsigned char *stackPointer);
 
-    int InitSDL(SDL_Window **window, SDL_Renderer **renderer, SDL_Texture **texture);
+int InitSDL(SDL_Window **window, SDL_Renderer **renderer, SDL_Texture **texture);
 
 void ClearScreen(unsigned char *display, SDL_Renderer **renderer);
 
@@ -32,6 +36,10 @@ void DisplaySprite(unsigned char *registers, unsigned char *ram, unsigned char V
 
 void DisplaySDL(unsigned char *display, SDL_Texture **texture, SDL_Renderer **renderer, int pitch);
 
+void DecrementTimers(unsigned int *delay_timer, unsigned int *sound_timer);
+
+void Add(unsigned char *registers, unsigned short X, unsigned short Y);
+
 int main(int argc, char *argv[])
 {
     unsigned char ram[MEMORY_SIZE];
@@ -40,7 +48,7 @@ int main(int argc, char *argv[])
     unsigned short stack[16];
     unsigned short PC;
     unsigned short I;
-    unsigned char sp;
+    unsigned char stackPointer;
     unsigned int delay_timer;
     unsigned int sound_timer;
     unsigned short opcode;
@@ -48,27 +56,28 @@ int main(int argc, char *argv[])
     SDL_Renderer *renderer;
     SDL_Texture *texture;
     bool quit = false;
+    srand(time(NULL));
 
-        unsigned char font[80] = {
-            0xF0, 0x90, 0x90, 0x90, 0xF0, // 0
-            0x20, 0x60, 0x20, 0x20, 0x70, // 1
-            0xF0, 0x10, 0xF0, 0x80, 0xF0, // 2
-            0xF0, 0x10, 0xF0, 0x10, 0xF0, // 3
-            0x90, 0x90, 0xF0, 0x10, 0x10, // 4
-            0xF0, 0x80, 0xF0, 0x10, 0xF0, // 5
-            0xF0, 0x80, 0xF0, 0x90, 0xF0, // 6
-            0xF0, 0x10, 0x20, 0x40, 0x40, // 7
-            0xF0, 0x90, 0xF0, 0x90, 0xF0, // 8
-            0xF0, 0x90, 0xF0, 0x10, 0xF0, // 9
-            0xF0, 0x90, 0xF0, 0x90, 0x90, // A
-            0xE0, 0x90, 0xE0, 0x90, 0xE0, // B
-            0xF0, 0x80, 0x80, 0x80, 0xF0, // C
-            0xE0, 0x90, 0x90, 0x90, 0xE0, // D
-            0xF0, 0x80, 0xF0, 0x80, 0xF0, // E
-            0xF0, 0x80, 0xF0, 0x80, 0x80  // F
-        };
+    unsigned char font[80] = {
+        0xF0, 0x90, 0x90, 0x90, 0xF0, // 0
+        0x20, 0x60, 0x20, 0x20, 0x70, // 1
+        0xF0, 0x10, 0xF0, 0x80, 0xF0, // 2
+        0xF0, 0x10, 0xF0, 0x10, 0xF0, // 3
+        0x90, 0x90, 0xF0, 0x10, 0x10, // 4
+        0xF0, 0x80, 0xF0, 0x10, 0xF0, // 5
+        0xF0, 0x80, 0xF0, 0x90, 0xF0, // 6
+        0xF0, 0x10, 0x20, 0x40, 0x40, // 7
+        0xF0, 0x90, 0xF0, 0x90, 0xF0, // 8
+        0xF0, 0x90, 0xF0, 0x10, 0xF0, // 9
+        0xF0, 0x90, 0xF0, 0x90, 0x90, // A
+        0xE0, 0x90, 0xE0, 0x90, 0xE0, // B
+        0xF0, 0x80, 0x80, 0x80, 0xF0, // C
+        0xE0, 0x90, 0x90, 0x90, 0xE0, // D
+        0xF0, 0x80, 0xF0, 0x80, 0xF0, // E
+        0xF0, 0x80, 0xF0, 0x80, 0x80  // F
+    };
 
-    Init(ram, display, registers, &PC, &I, stack, &delay_timer, &sound_timer, &sp, &opcode, font);
+    Init(ram, display, registers, &PC, &I, stack, &delay_timer, &sound_timer, &stackPointer, &opcode, font);
 
     if(InitSDL(&window, &renderer, &texture) == 1){
         return EXIT_FAILURE;
@@ -76,7 +85,9 @@ int main(int argc, char *argv[])
 
     int videoPitch = sizeof(display[0]) * WIDTH;
 
-    LoadRom(ram);
+    if(!LoadRom(ram)){
+        return EXIT_FAILURE;
+    }
 
     while(!quit){
         SDL_Event event;
@@ -87,9 +98,9 @@ int main(int argc, char *argv[])
 
             Fetch(ram, &opcode, &PC);
 
-            Decode(opcode, &PC, registers, &I, display, &renderer, ram, &texture, videoPitch);
+            Decode(opcode, &PC, registers, &I, display, &renderer, ram, &texture, videoPitch, stack, &stackPointer);
 
-            SDL_Delay(16);
+            DecrementTimers(&delay_timer, &sound_timer);
         }
     }
 
@@ -101,7 +112,7 @@ int main(int argc, char *argv[])
 }
 
 void Init(unsigned char *ram, unsigned char *display, unsigned char *registers, unsigned short *PC, unsigned short *I, unsigned short *stack,
-          unsigned int *delay_timer, unsigned int *sound_timer, unsigned char *sp,
+          unsigned int *delay_timer, unsigned int *sound_timer, unsigned char *stackPointer,
           unsigned short *opcode, unsigned char *font)
 {
 
@@ -125,9 +136,13 @@ void Init(unsigned char *ram, unsigned char *display, unsigned char *registers, 
         ram[0x50 + i] = font[i];
     }
 
+    for(int i = 0;i<16;i++){
+        stack[i] = 0;
+    }
+
     *PC = 0x200;
     *I = 0;
-    *sp = 0;
+    *stackPointer = 0;
     *delay_timer = 0;
     *sound_timer = 0;
     *opcode = 0;
@@ -167,7 +182,7 @@ int InitSDL(SDL_Window **window, SDL_Renderer **renderer, SDL_Texture **texture)
 
 bool LoadRom(unsigned char *ram)
 {
-    FILE *rom = fopen("./1-chip8-logo.ch8", "rb");
+    FILE *rom = fopen("./roms/Minimalgame[RevivalStudios,2007].ch8", "rb");
 
     if (rom == NULL)
     {
@@ -177,16 +192,6 @@ bool LoadRom(unsigned char *ram)
     }
 
     size_t rom_size = fread(ram + 0x200, 1, MEMORY_SIZE - 0x200, rom);
-
-    printf("Debug rom : \n");
-    for (int i = 0x200; i < 0x200 + rom_size; i += 2)
-    {
-        // Combine les deux octets pour former l'opcode 16 bits
-        unsigned short opcode = (ram[i] << 8) | ram[i + 1];
-
-        // Affiche l'opcode sous forme hexadécimale
-        printf("Adresse 0x%03X : Opcode 0x%04X\n", i, opcode);
-    }
 
     if (rom_size == 0)
     {
@@ -211,7 +216,8 @@ void Fetch(unsigned char *ram, unsigned short *opcode, unsigned short *PC)
 }
 
 void Decode(unsigned short opcode, unsigned short *PC, unsigned char *registers, unsigned short *I, 
-            unsigned char *display, SDL_Renderer **renderer, unsigned char *ram, SDL_Texture **texture, int pitch)
+            unsigned char *display, SDL_Renderer **renderer, unsigned char *ram, SDL_Texture **texture, int pitch,
+            unsigned short *stack, unsigned char *stackPointer)
 {
     unsigned short firstNibble = (opcode & 0xF000) >> 12;
     unsigned short X = (opcode & 0x0F00) >> 8;
@@ -219,16 +225,41 @@ void Decode(unsigned short opcode, unsigned short *PC, unsigned char *registers,
     unsigned short N = (opcode & 0x000F);
     unsigned short NN = (opcode & 0x00FF);
     unsigned short NNN = (opcode & 0xFFF);
+    unsigned short shiftedBit;
+    unsigned short randomNumber;
 
     switch (firstNibble)
     {
         case 0x0:
             if(opcode == 0x00E0){
                 ClearScreen(display, renderer);
+            }else if (opcode == 0x00EE){
+                *PC = stack[*stackPointer];
+                stack[*stackPointer] = 0;
+                *stackPointer--;
             }
             break;
         case 0x1:
             *PC = NNN;
+            break;
+        case 0x2:
+            stack[*stackPointer] = *PC;
+            *stackPointer++;
+            break;
+        case 0x3:
+            if(registers[X] == NN){
+                *PC += 2;
+            }
+            break;
+        case 0x4:
+            if(registers[X] != NN){
+                *PC += 2;
+            }
+            break;
+        case 0x5:
+            if(N == 0 && registers[X] == registers[Y]){
+                *PC +=2;
+            }
             break;
         case 0x6:
             registers[X] = NN;
@@ -236,16 +267,72 @@ void Decode(unsigned short opcode, unsigned short *PC, unsigned char *registers,
         case 0x7:
             registers[X] += NN;
             break;
+        case 0x9:
+            if(N==0 & registers[X] != registers[Y]){
+                *PC += 2;
+            }
+            break;
+        case 0x8:
+            switch(N){
+                case 0:
+                    registers[X] = registers[Y];
+                    break;
+                case 1:
+                    registers[X] = registers[X] | registers[Y];
+                    break;
+                case 2:
+                    registers[X] = registers[X] & registers[Y];
+                    break;
+                case 3:
+                    registers[X] = registers[X] ^ registers[Y];
+                    break;
+                case 4:
+                    Add(registers, X, Y);
+                    break;
+                case 5:
+                    registers[X] = (registers[X] - registers[Y]) % 256;
+                    registers[0xF] = (registers[X] > registers[Y]) ? 1 : 0;
+                    break;
+                case 6:
+                    //Not configurable for the moment
+                    //registers[X] = registers[Y];
+                    shiftedBit = registers[X] & 0x01;
+                    registers[0xF] = shiftedBit;
+                    registers[X] >> 1;
+                    break;
+                case 7:
+                    registers[X] = (registers[X] - registers[Y]) % 256;
+                    registers[0xF] = (registers[Y] > registers[X]) ? 1 : 0;
+                    break;
+                default:
+                    shiftedBit = (registers[X] & 0x80) >> 7;
+                    registers[0xF] = shiftedBit;
+                    registers[X] << 1;
+            }
+            break;
         case 0xA:
             *I = NNN;
+            break;
+        case 0xB:
+            *PC = NNN + registers[0];
+            break;
+        case 0xC:
+            randomNumber = rand()%256;
+            registers[X] = randomNumber & NN;
             break;
         case 0xD:
             DisplaySprite(registers, ram, X, Y, N, *I, display);
             DisplaySDL(display, texture, renderer, pitch);
             break;
+        case 0xE:
+            switch(opcode & 0xF0FF){
+                case 0xE09E:
+                    break;
+                case 0xE0A1:
+                    break;
+            }
+            break;
     }
-
-    printf("opcode : 0x%hX\n", opcode);
 }
 
 void ClearScreen(unsigned char *display, SDL_Renderer **renderer)
@@ -330,3 +417,25 @@ void DisplaySDL(unsigned char *display, SDL_Texture **texture, SDL_Renderer **re
     SDL_RenderCopy(*renderer, *texture, NULL, NULL);
     SDL_RenderPresent(*renderer);
 }
+
+void DecrementTimers(unsigned int *delay_timer, unsigned int *sound_timer){
+    if(*delay_timer > 0){
+        *delay_timer--;
+    }
+
+    if(*sound_timer > 0){
+        *sound_timer--;
+        Beep(750, 8);
+    }
+
+    SDL_Delay(16);
+}
+
+void Add(unsigned char *registers, unsigned short X, unsigned short Y){
+    unsigned int res = registers[X] + registers[Y];
+    registers[X] = res & 0xFF;
+
+    registers[0xF] = (res > 255) ? 1 : 0;
+}
+
+// TODO: handleKeys function.
