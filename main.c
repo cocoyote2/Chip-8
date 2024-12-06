@@ -18,19 +18,21 @@ bool LoadRom(unsigned char *ram);
 
 void Fetch(unsigned char *ram, unsigned short *opcode, unsigned short *PC);
 
-void Decode(unsigned short opcode, unsigned short *PC, unsigned char *registers, unsigned short *I, unsigned char *display, SDL_Renderer *renderer);
+void Decode(unsigned short opcode, unsigned short *PC, unsigned char *registers, unsigned short *I,
+            unsigned char *display, SDL_Renderer **renderer, unsigned char *ram, SDL_Texture **texture, int pitch);
 
-int InitSDL(SDL_Window *window, SDL_Renderer *renderer, SDL_Texture *texture);
+    int InitSDL(SDL_Window **window, SDL_Renderer **renderer, SDL_Texture **texture);
 
-void ClearScreen(unsigned char *display, SDL_Renderer *renderer);
+void ClearScreen(unsigned char *display, SDL_Renderer **renderer);
 
-int HandleEvents(SDL_Event event);
+int HandleEvents(SDL_Event event, bool *quit);
 
-void DisplaySprite(unsigned char *registers, unsigned char VX, unsigned char VY, unsigned short N);
+void DisplaySprite(unsigned char *registers, unsigned char *ram, unsigned char VX, unsigned char VY,
+                   unsigned short N, unsigned short I, unsigned char *display);
 
-void DisplaySDL();
+void DisplaySDL(unsigned char *display, SDL_Texture **texture, SDL_Renderer **renderer, int pitch);
 
-    int main(int argc, char *argv[])
+int main(int argc, char *argv[])
 {
     unsigned char ram[MEMORY_SIZE];
     unsigned char registers[16];
@@ -68,25 +70,24 @@ void DisplaySDL();
 
     Init(ram, display, registers, &PC, &I, stack, &delay_timer, &sound_timer, &sp, &opcode, font);
 
-    if(InitSDL(window, renderer, texture) == 1){
+    if(InitSDL(&window, &renderer, &texture) == 1){
         return EXIT_FAILURE;
     }
 
-    ram[PC] = 0xAB;
-    ram[PC + 1] = 0xCD;
+    int videoPitch = sizeof(display[0]) * WIDTH;
+
+    LoadRom(ram);
 
     while(!quit){
         SDL_Event event;
         while(SDL_PollEvent(&event)){
-            if(HandleEvents(event) == 0){
+            if(HandleEvents(event, &quit) == 0){
                 return EXIT_SUCCESS;
             }
 
             Fetch(ram, &opcode, &PC);
 
-            printf("opcode : 0x%hX\n", opcode);
-
-            Decode(opcode, &PC, registers, &I, display, renderer);
+            Decode(opcode, &PC, registers, &I, display, &renderer, ram, &texture, videoPitch);
 
             SDL_Delay(16);
         }
@@ -132,33 +133,35 @@ void Init(unsigned char *ram, unsigned char *display, unsigned char *registers, 
     *opcode = 0;
 }
 
-int InitSDL(SDL_Window *window, SDL_Renderer *renderer, SDL_Texture *texture)
+int InitSDL(SDL_Window **window, SDL_Renderer **renderer, SDL_Texture **texture)
 {
     if(SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS | SDL_INIT_TIMER) != 0){
         fprintf(stderr, "Couldn't initialize SDL : %s", SDL_GetError());
         return EXIT_FAILURE;
     }
 
-    window = SDL_CreateWindow("Chip-8", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, WIDTH*SCALE, HEIGHT*SCALE, SDL_WINDOW_SHOWN);
+    *window = SDL_CreateWindow("Chip-8", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, WIDTH*SCALE, HEIGHT*SCALE, SDL_WINDOW_SHOWN);
 
-    if(window == NULL){
+    if(*window == NULL){
         fprintf(stderr, "Couldn't create a window : %s", SDL_GetError());
         return EXIT_FAILURE;
     }
 
-    renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
+    *renderer = SDL_CreateRenderer(*window, -1, SDL_RENDERER_ACCELERATED);
 
-    if(renderer == NULL){
+    if(*renderer == NULL){
         fprintf(stderr, "Couldn't initialize renderer : %s", SDL_GetError());
         return EXIT_FAILURE;
     }
 
-    texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_STREAMING, WIDTH*SCALE, HEIGHT*SCALE);
+    *texture = SDL_CreateTexture(*renderer, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_STREAMING, WIDTH, HEIGHT);
 
-    if(texture == NULL){
+    if(*texture == NULL){
         fprintf(stderr, "Couldn't initialize the texure : %s", SDL_GetError());
+        return EXIT_FAILURE;
     }
 
+    fprintf(stdout, "Initialization successfull !");
     return EXIT_SUCCESS;
 }
 
@@ -174,6 +177,16 @@ bool LoadRom(unsigned char *ram)
     }
 
     size_t rom_size = fread(ram + 0x200, 1, MEMORY_SIZE - 0x200, rom);
+
+    printf("Debug rom : \n");
+    for (int i = 0x200; i < 0x200 + rom_size; i += 2)
+    {
+        // Combine les deux octets pour former l'opcode 16 bits
+        unsigned short opcode = (ram[i] << 8) | ram[i + 1];
+
+        // Affiche l'opcode sous forme hexadécimale
+        printf("Adresse 0x%03X : Opcode 0x%04X\n", i, opcode);
+    }
 
     if (rom_size == 0)
     {
@@ -197,7 +210,8 @@ void Fetch(unsigned char *ram, unsigned short *opcode, unsigned short *PC)
     *PC += 2;
 }
 
-void Decode(unsigned short opcode, unsigned short *PC, unsigned char *registers, unsigned short *I, unsigned char *display, SDL_Renderer *renderer)
+void Decode(unsigned short opcode, unsigned short *PC, unsigned char *registers, unsigned short *I, 
+            unsigned char *display, SDL_Renderer **renderer, unsigned char *ram, SDL_Texture **texture, int pitch)
 {
     unsigned short firstNibble = (opcode & 0xF000) >> 12;
     unsigned short X = (opcode & 0x0F00) >> 8;
@@ -208,44 +222,52 @@ void Decode(unsigned short opcode, unsigned short *PC, unsigned char *registers,
 
     switch (firstNibble)
     {
-    case 0x0:
-
-        break;
-    case 0x1:
-        *PC = NNN;
-        break;
-    case 0x6:
-        registers[X] = NN;
-        break;
-    case 0x7:
-        registers[X] += NN;
-        break;
-    case 0xA:
-        *I = NNN;
-        break;
-    case 0xD:
-        ClearScreen(display, renderer);
-        break;
+        case 0x0:
+            if(opcode == 0x00E0){
+                ClearScreen(display, renderer);
+            }
+            break;
+        case 0x1:
+            *PC = NNN;
+            break;
+        case 0x6:
+            registers[X] = NN;
+            break;
+        case 0x7:
+            registers[X] += NN;
+            break;
+        case 0xA:
+            *I = NNN;
+            break;
+        case 0xD:
+            DisplaySprite(registers, ram, X, Y, N, *I, display);
+            DisplaySDL(display, texture, renderer, pitch);
+            break;
     }
 
-    printf("NN : 0x%hX", NN);
+    printf("opcode : 0x%hX\n", opcode);
 }
 
-void ClearScreen(unsigned char *display, SDL_Renderer *renderer)
+void ClearScreen(unsigned char *display, SDL_Renderer **renderer)
 {
     for (int i = 0; i < WIDTH * HEIGHT; i++)
     {
         display[i] = 0;
     }
 
-    SDL_RenderClear(renderer);
+    if(SDL_RenderClear(*renderer) < 0){
+        fprintf(stderr, "Error when clearing renderer : %s", SDL_GetError());
+        return;
+    }
+
+    SDL_RenderPresent(*renderer);
 }
 
-int HandleEvents(SDL_Event event){
+int HandleEvents(SDL_Event event, bool *quit){
     switch (event.type)
     {
     case SDL_QUIT:
-        return EXIT_SUCCESS;
+        *quit = true;
         break;
     
     default:
@@ -253,13 +275,58 @@ int HandleEvents(SDL_Event event){
     }
 }
 
-void DisplaySprite(unsigned char *registers, unsigned char VX, unsigned char VY, unsigned short N){
-    unsigned char x = registers[VX]%64;
-    unsigned char y = registers[VY]%32;
+void DisplaySprite(unsigned char *registers, unsigned char *ram, unsigned char VX, unsigned char VY, 
+                unsigned short N, unsigned short I, unsigned char *display){
+    unsigned char x = registers[VX] % WIDTH;
+    unsigned char y = registers[VY] % HEIGHT;
 
     registers[0xF] = 0;
+
+    for(int row = 0;row < N;row++){
+        unsigned char currByte = ram[I + row];
+
+        for(int col = 0;col<8;col++){
+            unsigned char spritePixel = currByte & (0x80u >> col);
+
+            unsigned int pixelIndex = (y+row) * WIDTH + (x+col);
+
+            if((x+col) >= WIDTH || (y+row) >= HEIGHT)
+                continue;
+
+            unsigned char currPixel = display[(y + row) * WIDTH + (x + col)];
+
+            if(spritePixel){
+                if (currPixel == 0xFF){
+                    registers[0xF] = 1;
+                }
+
+                display[pixelIndex] ^= 0xFF;
+            }
+        }
+    }
 }
 
-void DisplaySDL(){
+void DisplaySDL(unsigned char *display, SDL_Texture **texture, SDL_Renderer **renderer, int pitch)
+{
+    void *pixels = NULL;
+    int pitch_in_bytes = 0;
 
+    if (SDL_LockTexture(*texture, NULL, &pixels, &pitch_in_bytes) != 0)
+    {
+        fprintf(stderr, "Unable to lock texture: %s\n", SDL_GetError());
+        return;
+    }
+
+    uint32_t *pixel_ptr = (uint32_t *)pixels;
+
+    for (int i = 0; i < WIDTH * HEIGHT; ++i)
+    {
+        pixel_ptr[i] = (display[i] == 0xFF) ? 0xFFFFFFFF : 0x00000000;
+    }
+
+    SDL_UnlockTexture(*texture);
+
+    SDL_RenderClear(*renderer);
+    SDL_RenderCopy(*renderer, *texture, NULL, NULL);
+    SDL_RenderPresent(*renderer);
 }
