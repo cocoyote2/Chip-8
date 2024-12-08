@@ -3,5 +3,8 @@
     "files.associations": {
         "stdio.h": "c",
         "string.h": "c"
-    }
+    },
+    "workbench.colorTheme": "Material Theme Ocean",
+    "workbench.preferredDarkColorTheme": "One Dark Pro Darker",
+    "workbench.preferredHighContrastColorTheme": "Default High Contrast"
 }

@@ -12,53 +12,63 @@
 #define HEIGHT 32
 #define SCALE 20
 #define MEMORY_SIZE 4096
+#define CHIP8_KEY_COUNT 16
 
-void Init(unsigned char *ram, unsigned char *display, unsigned char *registers, unsigned short *PC, unsigned short *I, unsigned short *stack,
-          unsigned int *delay_timer, unsigned int *sound_timer, unsigned char *stackPointer,
-          unsigned short *opcode, unsigned char *font);
+void Init(uint8_t *ram, uint8_t *display, uint8_t *registers, uint16_t *PC, uint16_t *I, uint16_t *stack,
+          uint32_t *delay_timer, uint32_t *sound_timer, uint8_t *stackPointer,
+          uint16_t *opcode, uint8_t *font);
 
-bool LoadRom(unsigned char *ram);
+bool LoadRom(uint8_t *ram);
 
-void Fetch(unsigned char *ram, unsigned short *opcode, unsigned short *PC);
+void Fetch(uint8_t *ram, uint16_t *opcode, uint16_t *PC);
 
-void Decode(unsigned short opcode, unsigned short *PC, unsigned char *registers, unsigned short *I,
-            unsigned char *display, SDL_Renderer **renderer, unsigned char *ram, SDL_Texture **texture, int pitch,
-            unsigned short *stack, unsigned char *stackPointer);
+void Decode(uint16_t opcode, uint16_t *PC, uint8_t *registers, uint16_t *I,
+            uint8_t *display, SDL_Renderer **renderer, uint8_t *ram, SDL_Texture **texture, int pitch,
+            uint16_t *stack, uint8_t *stackPointer, uint8_t *keypad, uint32_t *delay_timer, uint32_t *sound_timer);
 
 int InitSDL(SDL_Window **window, SDL_Renderer **renderer, SDL_Texture **texture);
 
-void ClearScreen(unsigned char *display, SDL_Renderer **renderer);
+void ClearScreen(uint8_t *display, SDL_Renderer **renderer);
 
 int HandleEvents(SDL_Event event, bool *quit);
 
-void DisplaySprite(unsigned char *registers, unsigned char *ram, unsigned char VX, unsigned char VY,
-                   unsigned short N, unsigned short I, unsigned char *display);
+void DisplaySprite(uint8_t *registers, uint8_t *ram, uint8_t VX, uint8_t VY,
+                   uint16_t N, uint16_t I, uint8_t *display);
 
-void DisplaySDL(unsigned char *display, SDL_Texture **texture, SDL_Renderer **renderer, int pitch);
+void DisplaySDL(uint8_t *display, SDL_Texture **texture, SDL_Renderer **renderer, int pitch);
 
-void DecrementTimers(unsigned int *delay_timer, unsigned int *sound_timer);
+void DecrementTimers(uint32_t *delay_timer, uint32_t *sound_timer);
 
-void Add(unsigned char *registers, unsigned short X, unsigned short Y);
+void Add(uint8_t *registers, uint16_t X, uint16_t Y);
 
-int main(int argc, char *argv[])
+void handleKeys(SDL_Event event, SDL_Scancode *keymap, uint8_t *keypad);
+
+bool isKeyPressed(uint8_t key, uint8_t *keypad);
+
+void instruction0x0A(uint8_t *registers, uint16_t X, uint8_t *keypad);
+
+void instruction0x29(uint16_t *I, uint16_t X, uint8_t *registers);
+
+    int main(int argc, char *argv[])
 {
-    unsigned char ram[MEMORY_SIZE];
-    unsigned char registers[16];
-    unsigned char display[WIDTH * HEIGHT] = {0};
-    unsigned short stack[16];
-    unsigned short PC;
-    unsigned short I;
-    unsigned char stackPointer;
-    unsigned int delay_timer;
-    unsigned int sound_timer;
-    unsigned short opcode;
+    uint8_t ram[MEMORY_SIZE];
+    uint8_t registers[16];
+    uint8_t display[WIDTH * HEIGHT] = {0};
+    uint16_t stack[16];
+    uint16_t PC;
+    uint16_t I;
+    uint8_t stackPointer;
+    uint32_t delay_timer;
+    uint32_t sound_timer;
+    uint16_t opcode;
+    uint8_t keypad[CHIP8_KEY_COUNT];
     SDL_Window *window;
     SDL_Renderer *renderer;
     SDL_Texture *texture;
     bool quit = false;
     srand(time(NULL));
 
-    unsigned char font[80] = {
+    uint8_t font[80] = {
         0xF0, 0x90, 0x90, 0x90, 0xF0, // 0
         0x20, 0x60, 0x20, 0x20, 0x70, // 1
         0xF0, 0x10, 0xF0, 0x80, 0xF0, // 2
@@ -75,6 +85,25 @@ int main(int argc, char *argv[])
         0xE0, 0x90, 0x90, 0x90, 0xE0, // D
         0xF0, 0x80, 0xF0, 0x80, 0xF0, // E
         0xF0, 0x80, 0xF0, 0x80, 0x80  // F
+    };
+
+    SDL_Scancode keymap[CHIP8_KEY_COUNT] = {
+        SDL_SCANCODE_1, // 0x1 -> 1
+        SDL_SCANCODE_2, // 0x2 -> 2
+        SDL_SCANCODE_3, // 0x3 -> 3
+        SDL_SCANCODE_4, // 0x4 -> 4
+        SDL_SCANCODE_Q, // 0x5 -> Q
+        SDL_SCANCODE_W, // 0x6 -> W
+        SDL_SCANCODE_E, // 0x7 -> E
+        SDL_SCANCODE_R, // 0x8 -> R
+        SDL_SCANCODE_A, // 0x9 -> A
+        SDL_SCANCODE_S, // 0xA -> S
+        SDL_SCANCODE_D, // 0xB -> D
+        SDL_SCANCODE_F, // 0xC -> F
+        SDL_SCANCODE_Z, // 0xD -> Z
+        SDL_SCANCODE_X, // 0xE -> X
+        SDL_SCANCODE_C, // 0xF -> C
+        SDL_SCANCODE_V  // 0x10 -> V 
     };
 
     Init(ram, display, registers, &PC, &I, stack, &delay_timer, &sound_timer, &stackPointer, &opcode, font);
@@ -98,9 +127,11 @@ int main(int argc, char *argv[])
 
             Fetch(ram, &opcode, &PC);
 
-            Decode(opcode, &PC, registers, &I, display, &renderer, ram, &texture, videoPitch, stack, &stackPointer);
+            Decode(opcode, &PC, registers, &I, display, &renderer, ram, &texture, videoPitch, stack, &stackPointer, keypad, &delay_timer, &sound_timer);
 
             DecrementTimers(&delay_timer, &sound_timer);
+
+            handleKeys(event, keymap, keypad);
         }
     }
 
@@ -111,9 +142,9 @@ int main(int argc, char *argv[])
     return 0;
 }
 
-void Init(unsigned char *ram, unsigned char *display, unsigned char *registers, unsigned short *PC, unsigned short *I, unsigned short *stack,
-          unsigned int *delay_timer, unsigned int *sound_timer, unsigned char *stackPointer,
-          unsigned short *opcode, unsigned char *font)
+void Init(uint8_t *ram, uint8_t *display, uint8_t *registers, uint16_t *PC, uint16_t *I, uint16_t *stack,
+          uint32_t *delay_timer, uint32_t *sound_timer, uint8_t *stackPointer,
+          uint16_t *opcode, uint8_t *font)
 {
 
     for (int i = 0; i < MEMORY_SIZE; i++)
@@ -180,9 +211,9 @@ int InitSDL(SDL_Window **window, SDL_Renderer **renderer, SDL_Texture **texture)
     return EXIT_SUCCESS;
 }
 
-bool LoadRom(unsigned char *ram)
+bool LoadRom(uint8_t *ram)
 {
-    FILE *rom = fopen("./roms/Minimalgame[RevivalStudios,2007].ch8", "rb");
+    FILE *rom = fopen("./roms/3-corax+.ch8", "rb");
 
     if (rom == NULL)
     {
@@ -205,7 +236,7 @@ bool LoadRom(unsigned char *ram)
     return true;
 }
 
-void Fetch(unsigned char *ram, unsigned short *opcode, unsigned short *PC)
+void Fetch(uint8_t *ram, uint16_t *opcode, uint16_t *PC)
 {
     // 1 part of ram is 1/2 instruction => 0xAB == 10101011 (There are multiple 0 before the binary code)
     // In order to combine these, we need to move the 0xAB on the left with << and then combine
@@ -215,18 +246,18 @@ void Fetch(unsigned char *ram, unsigned short *opcode, unsigned short *PC)
     *PC += 2;
 }
 
-void Decode(unsigned short opcode, unsigned short *PC, unsigned char *registers, unsigned short *I, 
-            unsigned char *display, SDL_Renderer **renderer, unsigned char *ram, SDL_Texture **texture, int pitch,
-            unsigned short *stack, unsigned char *stackPointer)
+void Decode(uint16_t opcode, uint16_t *PC, uint8_t *registers, uint16_t *I, 
+            uint8_t *display, SDL_Renderer **renderer, uint8_t *ram, SDL_Texture **texture, int pitch,
+            uint16_t *stack, uint8_t *stackPointer, uint8_t *keypad, uint32_t *delay_timer, uint32_t *sound_timer)
 {
-    unsigned short firstNibble = (opcode & 0xF000) >> 12;
-    unsigned short X = (opcode & 0x0F00) >> 8;
-    unsigned short Y = (opcode & 0x00F0) >> 4;
-    unsigned short N = (opcode & 0x000F);
-    unsigned short NN = (opcode & 0x00FF);
-    unsigned short NNN = (opcode & 0xFFF);
-    unsigned short shiftedBit;
-    unsigned short randomNumber;
+    uint16_t firstNibble = (opcode & 0xF000) >> 12;
+    uint16_t X = (opcode & 0x0F00) >> 8;
+    uint16_t Y = (opcode & 0x00F0) >> 4;
+    uint16_t N = (opcode & 0x000F);
+    uint16_t NN = (opcode & 0x00FF);
+    uint16_t NNN = (opcode & 0xFFF);
+    uint16_t shiftedBit;
+    uint16_t randomNumber;
 
     switch (firstNibble)
     {
@@ -234,17 +265,22 @@ void Decode(unsigned short opcode, unsigned short *PC, unsigned char *registers,
             if(opcode == 0x00E0){
                 ClearScreen(display, renderer);
             }else if (opcode == 0x00EE){
-                *PC = stack[*stackPointer];
-                stack[*stackPointer] = 0;
-                *stackPointer--;
+                if(*stackPointer > 0){
+                    (*stackPointer)--;
+                    *PC = stack[*stackPointer];
+                    stack[*stackPointer] = 0;
+                }
             }
             break;
         case 0x1:
             *PC = NNN;
             break;
         case 0x2:
-            stack[*stackPointer] = *PC;
-            *stackPointer++;
+            if(*stackPointer < 16){
+                stack[*stackPointer] = *PC;
+                (*stackPointer)++;
+            }
+            *PC = NNN;
             break;
         case 0x3:
             if(registers[X] == NN){
@@ -290,7 +326,7 @@ void Decode(unsigned short opcode, unsigned short *PC, unsigned char *registers,
                     Add(registers, X, Y);
                     break;
                 case 5:
-                    registers[X] = (registers[X] - registers[Y]) % 256;
+                    registers[X] = (registers[X] - registers[Y]) & 0xFF;
                     registers[0xF] = (registers[X] > registers[Y]) ? 1 : 0;
                     break;
                 case 6:
@@ -298,16 +334,16 @@ void Decode(unsigned short opcode, unsigned short *PC, unsigned char *registers,
                     //registers[X] = registers[Y];
                     shiftedBit = registers[X] & 0x01;
                     registers[0xF] = shiftedBit;
-                    registers[X] >> 1;
+                    registers[X] >>= 1;
                     break;
                 case 7:
-                    registers[X] = (registers[X] - registers[Y]) % 256;
+                    registers[X] = (registers[Y] - registers[X]) & 0xFF;
                     registers[0xF] = (registers[Y] > registers[X]) ? 1 : 0;
                     break;
                 default:
                     shiftedBit = (registers[X] & 0x80) >> 7;
                     registers[0xF] = shiftedBit;
-                    registers[X] << 1;
+                    registers[X] <<= 1;
             }
             break;
         case 0xA:
@@ -327,15 +363,60 @@ void Decode(unsigned short opcode, unsigned short *PC, unsigned char *registers,
         case 0xE:
             switch(opcode & 0xF0FF){
                 case 0xE09E:
+                    if(X >= 0x0 && X <= 0xF && keypad[X] == 1){
+                        *PC += 2;
+                    }
                     break;
                 case 0xE0A1:
+                    if (X >= 0x0 && X <= 0xF && keypad[X] == 0)
+                    {
+                        *PC +=2;
+                    }
+                    break;
+            }
+            break;
+        case 0xF:
+            switch(NN){
+                case 0x07:
+                    registers[X] = *delay_timer;
+                    break;
+                case 0x15:
+                    *delay_timer = registers[X];
+                    break;
+                case 0x18:
+                    *sound_timer = registers[X];
+                    break;
+                case 0x1E:
+                    *I = *I + registers[X];
+                    break;
+                case 0x0A:
+                    instruction0x0A(registers, X, keypad);
+                    break;
+                case 0x29:
+                    instruction0x29(I, X, registers);
+                    break;
+                case 0x33:
+                    ram[*I] = registers[X] / 100;
+                    ram[*I + 1] = (registers[X] % 100) / 10;
+                    ram[*I + 2] = registers[X] % 10 ;
+                    break;
+                case 0x55:
+                    for(int i = 0x0;i<=X;i++){
+                        ram[*I + i] = registers[i];
+                    }   
+                    break;
+
+                case 0x65:
+                    for(int i = 0;i<=X;i++){
+                        registers[i] = ram[*I + i];
+                    }
                     break;
             }
             break;
     }
 }
 
-void ClearScreen(unsigned char *display, SDL_Renderer **renderer)
+void ClearScreen(uint8_t *display, SDL_Renderer **renderer)
 {
     for (int i = 0; i < WIDTH * HEIGHT; i++)
     {
@@ -362,25 +443,25 @@ int HandleEvents(SDL_Event event, bool *quit){
     }
 }
 
-void DisplaySprite(unsigned char *registers, unsigned char *ram, unsigned char VX, unsigned char VY, 
-                unsigned short N, unsigned short I, unsigned char *display){
-    unsigned char x = registers[VX] % WIDTH;
-    unsigned char y = registers[VY] % HEIGHT;
+void DisplaySprite(uint8_t *registers, uint8_t *ram, uint8_t VX, uint8_t VY, 
+                uint16_t N, uint16_t I, uint8_t *display){
+    uint8_t x = registers[VX] % WIDTH;
+    uint8_t y = registers[VY] % HEIGHT;
 
     registers[0xF] = 0;
 
     for(int row = 0;row < N;row++){
-        unsigned char currByte = ram[I + row];
+        uint8_t currByte = ram[I + row];
 
         for(int col = 0;col<8;col++){
-            unsigned char spritePixel = currByte & (0x80u >> col);
+            uint8_t spritePixel = currByte & (0x80u >> col);
 
-            unsigned int pixelIndex = (y+row) * WIDTH + (x+col);
+            uint32_t pixelIndex = (y+row) * WIDTH + (x+col);
 
             if((x+col) >= WIDTH || (y+row) >= HEIGHT)
                 continue;
 
-            unsigned char currPixel = display[(y + row) * WIDTH + (x + col)];
+            uint8_t currPixel = display[(y + row) * WIDTH + (x + col)];
 
             if(spritePixel){
                 if (currPixel == 0xFF){
@@ -393,7 +474,7 @@ void DisplaySprite(unsigned char *registers, unsigned char *ram, unsigned char V
     }
 }
 
-void DisplaySDL(unsigned char *display, SDL_Texture **texture, SDL_Renderer **renderer, int pitch)
+void DisplaySDL(uint8_t *display, SDL_Texture **texture, SDL_Renderer **renderer, int pitch)
 {
     void *pixels = NULL;
     int pitch_in_bytes = 0;
@@ -418,7 +499,7 @@ void DisplaySDL(unsigned char *display, SDL_Texture **texture, SDL_Renderer **re
     SDL_RenderPresent(*renderer);
 }
 
-void DecrementTimers(unsigned int *delay_timer, unsigned int *sound_timer){
+void DecrementTimers(uint32_t *delay_timer, uint32_t *sound_timer){
     if(*delay_timer > 0){
         *delay_timer--;
     }
@@ -431,11 +512,51 @@ void DecrementTimers(unsigned int *delay_timer, unsigned int *sound_timer){
     SDL_Delay(16);
 }
 
-void Add(unsigned char *registers, unsigned short X, unsigned short Y){
-    unsigned int res = registers[X] + registers[Y];
+void Add(uint8_t *registers, uint16_t X, uint16_t Y){
+    uint32_t res = registers[X] + registers[Y];
     registers[X] = res & 0xFF;
 
     registers[0xF] = (res > 255) ? 1 : 0;
 }
 
-// TODO: handleKeys function.
+void handleKeys(SDL_Event event, SDL_Scancode *keymap, uint8_t *keypad){
+    for(int i = 0;i<CHIP8_KEY_COUNT;i++){
+        if(event.key.keysym.scancode == keymap[i]){
+            if(event.type == SDL_KEYDOWN){
+                keypad[i] = 1;
+            }else{
+                keypad[i] = 0;
+            }
+            break;
+        }
+    }
+}
+
+bool isKeyPressed(uint8_t key, uint8_t *keypad){
+    return keypad[key] == 1;
+}
+
+void instruction0x0A(uint8_t *registers, uint16_t X, uint8_t *keypad){
+    uint8_t key_pressed = 0;
+    uint8_t key_value = 0xFF;
+
+    while (!key_pressed)
+    {
+        for (int i = 0; i < CHIP8_KEY_COUNT; i++)
+        {
+            if (isKeyPressed(i, keypad))
+            {
+                key_value = i;
+                key_pressed = 1;
+                break;
+            }
+        }
+    }
+
+    registers[X] = key_value;
+}
+
+void instruction0x29(uint16_t *I, uint16_t X, uint8_t *registers){    
+    uint8_t char_index = registers[X] & 0X0F;
+    *I = 0x050 + (char_index * 5);
+}
