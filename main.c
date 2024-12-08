@@ -213,7 +213,7 @@ int InitSDL(SDL_Window **window, SDL_Renderer **renderer, SDL_Texture **texture)
 
 bool LoadRom(uint8_t *ram)
 {
-    FILE *rom = fopen("./roms/3-corax+.ch8", "rb");
+    FILE *rom = fopen("./roms/5-quirks.ch8", "rb");
 
     if (rom == NULL)
     {
@@ -326,24 +326,24 @@ void Decode(uint16_t opcode, uint16_t *PC, uint8_t *registers, uint16_t *I,
                     Add(registers, X, Y);
                     break;
                 case 5:
-                    registers[X] = (registers[X] - registers[Y]) & 0xFF;
-                    registers[0xF] = (registers[X] > registers[Y]) ? 1 : 0;
+                    registers[X] -= registers[Y] & 0xFF;
+                    registers[0xF] = (registers[X] < registers[Y]) ? 1 : 0;               
                     break;
                 case 6:
                     //Not configurable for the moment
                     //registers[X] = registers[Y];
                     shiftedBit = registers[X] & 0x01;
-                    registers[0xF] = shiftedBit;
                     registers[X] >>= 1;
+                    registers[0xF] = shiftedBit;
                     break;
                 case 7:
                     registers[X] = (registers[Y] - registers[X]) & 0xFF;
                     registers[0xF] = (registers[Y] > registers[X]) ? 1 : 0;
                     break;
-                default:
-                    shiftedBit = (registers[X] & 0x80) >> 7;
-                    registers[0xF] = shiftedBit;
+                case 0xE:
+                    registers[0xF] = (registers[X] & 0x80) >> 7;
                     registers[X] <<= 1;
+                    break;
             }
             break;
         case 0xA:
