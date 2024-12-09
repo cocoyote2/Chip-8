@@ -118,20 +118,28 @@ void instruction0x29(uint16_t *I, uint16_t X, uint8_t *registers);
         return EXIT_FAILURE;
     }
 
+    uint32_t lastTime = SDL_GetTicks();
     while(!quit){
         SDL_Event event;
+        uint32_t currTime = SDL_GetTicks();
         while(SDL_PollEvent(&event)){
             if(HandleEvents(event, &quit) == 0){
                 return EXIT_SUCCESS;
             }
 
+            handleKeys(event, keymap, keypad);
+        }
+
+        if (currTime - lastTime >= 2) { // 2 ms pour 500 Hz
             Fetch(ram, &opcode, &PC);
 
             Decode(opcode, &PC, registers, &I, display, &renderer, ram, &texture, videoPitch, stack, &stackPointer, keypad, &delay_timer, &sound_timer);
+            lastTime = currTime;
+        }
 
-            DecrementTimers(&delay_timer, &sound_timer);
-
-            handleKeys(event, keymap, keypad);
+        // Mettre à jour les timers à 60 Hz
+        if (currTime % 16 == 0) {
+             DecrementTimers(&delay_timer, &sound_timer);
         }
     }
 
@@ -213,7 +221,7 @@ int InitSDL(SDL_Window **window, SDL_Renderer **renderer, SDL_Texture **texture)
 
 bool LoadRom(uint8_t *ram)
 {
-    FILE *rom = fopen("./roms/5-quirks.ch8", "rb");
+    FILE *rom = fopen("./roms/4-flags.ch8", "rb");
 
     if (rom == NULL)
     {
@@ -327,7 +335,7 @@ void Decode(uint16_t opcode, uint16_t *PC, uint8_t *registers, uint16_t *I,
                     break;
                 case 5:
                     registers[X] -= registers[Y] & 0xFF;
-                    registers[0xF] = (registers[X] < registers[Y]) ? 1 : 0;               
+                    registers[0xF] = (registers[X] >= registers[Y]) ? 1 : 0;               
                     break;
                 case 6:
                     //Not configurable for the moment
