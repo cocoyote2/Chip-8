@@ -132,6 +132,9 @@ void instruction0x29(uint16_t *I, uint16_t X, uint8_t *registers);
             DecrementTimers(&delay_timer, &sound_timer);
 
             handleKeys(event, keymap, keypad);
+
+            rewind(stderr);
+            fprintf(stderr, "test");
         }
     }
 
@@ -213,7 +216,7 @@ int InitSDL(SDL_Window **window, SDL_Renderer **renderer, SDL_Texture **texture)
 
 bool LoadRom(uint8_t *ram)
 {
-    FILE *rom = fopen("./roms/5-quirks.ch8", "rb");
+    FILE *rom = fopen("./roms/4-flags.ch8", "rb");
 
     if (rom == NULL)
     {
@@ -326,8 +329,9 @@ void Decode(uint16_t opcode, uint16_t *PC, uint8_t *registers, uint16_t *I,
                     Add(registers, X, Y);
                     break;
                 case 5:
+                    fprintf(stderr ,"Register X : %x", registers[X]);
                     registers[X] -= registers[Y] & 0xFF;
-                    registers[0xF] = (registers[X] < registers[Y]) ? 1 : 0;               
+                    registers[0xF] = (registers[X] < registers[Y]) ? 0 : 1;               
                     break;
                 case 6:
                     //Not configurable for the moment
