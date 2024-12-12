@@ -45,12 +45,15 @@ void handleKeys(SDL_Event event, SDL_Scancode *keymap, uint8_t *keypad);
 
 bool isKeyPressed(uint8_t key, uint8_t *keypad);
 
-void instruction0x0A(uint8_t *registers, uint16_t X, uint8_t *keypad);
+void instruction0x0A(uint8_t *registers, uint16_t X, uint8_t *keymap);
 
-void instruction0x29(uint16_t *I, uint16_t X, uint8_t *registers);
+    void instruction0x29(uint16_t *I, uint16_t X, uint8_t *registers);
 
-    int main(int argc, char *argv[])
+int main(int argc, char *argv[])
 {
+    setbuf(stdout, NULL); // Disable buffering for stdout
+    setbuf(stderr, NULL);
+
     uint8_t ram[MEMORY_SIZE];
     uint8_t registers[16];
     uint8_t display[WIDTH * HEIGHT] = {0};
@@ -118,24 +121,34 @@ void instruction0x29(uint16_t *I, uint16_t X, uint8_t *registers);
         return EXIT_FAILURE;
     }
 
+    uint32_t lastTime = SDL_GetTicks();
     while(!quit){
         SDL_Event event;
-        while(SDL_PollEvent(&event)){
-            if(HandleEvents(event, &quit) == 0){
-                return EXIT_SUCCESS;
-            }
+        uint32_t currTime = SDL_GetTicks();
 
+        while (SDL_PollEvent(&event))
+        {
+            if (event.type == SDL_QUIT)
+            {
+                quit = true;
+                break;
+            }
+            handleKeys(event, keymap, keypad); // Pass the actual event
+        }
+
+        if (currTime - lastTime >= 2) { // 2 ms pour 500 Hz
             Fetch(ram, &opcode, &PC);
 
             Decode(opcode, &PC, registers, &I, display, &renderer, ram, &texture, videoPitch, stack, &stackPointer, keypad, &delay_timer, &sound_timer);
-
-            DecrementTimers(&delay_timer, &sound_timer);
-
-            handleKeys(event, keymap, keypad);
-
-            rewind(stderr);
-            fprintf(stderr, "test");
+            lastTime = currTime;
         }
+
+        // Mettre à jour les timers à 60 Hz
+        if (currTime % 16 == 0) {
+             DecrementTimers(&delay_timer, &sound_timer);
+        }
+
+        SDL_Delay(1);
     }
 
     SDL_DestroyTexture(texture);
@@ -186,6 +199,7 @@ int InitSDL(SDL_Window **window, SDL_Renderer **renderer, SDL_Texture **texture)
 {
     if(SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS | SDL_INIT_TIMER) != 0){
         fprintf(stderr, "Couldn't initialize SDL : %s", SDL_GetError());
+        fflush(stderr);
         return EXIT_FAILURE;
     }
 
@@ -193,6 +207,7 @@ int InitSDL(SDL_Window **window, SDL_Renderer **renderer, SDL_Texture **texture)
 
     if(*window == NULL){
         fprintf(stderr, "Couldn't create a window : %s", SDL_GetError());
+        fflush(stderr);
         return EXIT_FAILURE;
     }
 
@@ -200,6 +215,7 @@ int InitSDL(SDL_Window **window, SDL_Renderer **renderer, SDL_Texture **texture)
 
     if(*renderer == NULL){
         fprintf(stderr, "Couldn't initialize renderer : %s", SDL_GetError());
+        fflush(stderr);
         return EXIT_FAILURE;
     }
 
@@ -207,16 +223,18 @@ int InitSDL(SDL_Window **window, SDL_Renderer **renderer, SDL_Texture **texture)
 
     if(*texture == NULL){
         fprintf(stderr, "Couldn't initialize the texure : %s", SDL_GetError());
+        fflush(stderr);
         return EXIT_FAILURE;
     }
 
     fprintf(stdout, "Initialization successfull !");
+    fflush(stdout);
     return EXIT_SUCCESS;
 }
 
 bool LoadRom(uint8_t *ram)
 {
-    FILE *rom = fopen("./roms/4-flags.ch8", "rb");
+    FILE *rom = fopen("./roms/5-quirks.ch8", "rb");
 
     if (rom == NULL)
     {
@@ -261,6 +279,7 @@ void Decode(uint16_t opcode, uint16_t *PC, uint8_t *registers, uint16_t *I,
     uint16_t NNN = (opcode & 0xFFF);
     uint16_t shiftedBit;
     uint16_t randomNumber;
+    uint8_t original_x;
 
     switch (firstNibble)
     {
@@ -329,9 +348,10 @@ void Decode(uint16_t opcode, uint16_t *PC, uint8_t *registers, uint16_t *I,
                     Add(registers, X, Y);
                     break;
                 case 5:
-                    fprintf(stderr ,"Register X : %x", registers[X]);
-                    registers[X] -= registers[Y] & 0xFF;
-                    registers[0xF] = (registers[X] < registers[Y]) ? 0 : 1;               
+                    original_x = registers[X];
+
+                    registers[X] = (original_x - registers[Y]) & 0xFF;
+                    registers[0xF] = (original_x >= registers[Y]) ? 1 : 0;
                     break;
                 case 6:
                     //Not configurable for the moment
@@ -345,8 +365,9 @@ void Decode(uint16_t opcode, uint16_t *PC, uint8_t *registers, uint16_t *I,
                     registers[0xF] = (registers[Y] > registers[X]) ? 1 : 0;
                     break;
                 case 0xE:
-                    registers[0xF] = (registers[X] & 0x80) >> 7;
-                    registers[X] <<= 1;
+                    original_x = registers[X];
+                    registers[X] = (original_x << 1) & 0xFF;
+                    registers[0xF] = (original_x & 0x80) >> 7;
                     break;
             }
             break;
@@ -523,15 +544,21 @@ void Add(uint8_t *registers, uint16_t X, uint16_t Y){
     registers[0xF] = (res > 255) ? 1 : 0;
 }
 
-void handleKeys(SDL_Event event, SDL_Scancode *keymap, uint8_t *keypad){
-    for(int i = 0;i<CHIP8_KEY_COUNT;i++){
-        if(event.key.keysym.scancode == keymap[i]){
-            if(event.type == SDL_KEYDOWN){
-                keypad[i] = 1;
-            }else{
-                keypad[i] = 0;
+void handleKeys(SDL_Event event, SDL_Scancode *keymap, uint8_t *keypad)
+{
+    // Only handle keyboard events
+    if (event.type == SDL_KEYDOWN || event.type == SDL_KEYUP)
+    {
+        SDL_Scancode scancode = event.key.keysym.scancode;
+
+        // Find which CHIP8 key corresponds to this scancode
+        for (int i = 0; i < CHIP8_KEY_COUNT; i++)
+        {
+            if (scancode == keymap[i])
+            {
+                keypad[i] = (event.type == SDL_KEYDOWN) ? 1 : 0;
+                break;
             }
-            break;
         }
     }
 }
@@ -540,24 +567,38 @@ bool isKeyPressed(uint8_t key, uint8_t *keypad){
     return keypad[key] == 1;
 }
 
-void instruction0x0A(uint8_t *registers, uint16_t X, uint8_t *keypad){
-    uint8_t key_pressed = 0;
-    uint8_t key_value = 0xFF;
+void instruction0x0A(uint8_t *registers, uint16_t X, uint8_t *keymap)
+{
+    SDL_Event event;
+    bool key_pressed = false;
 
     while (!key_pressed)
     {
-        for (int i = 0; i < CHIP8_KEY_COUNT; i++)
+        while (SDL_PollEvent(&event))
         {
-            if (isKeyPressed(i, keypad))
+            if (event.type == SDL_QUIT)
             {
-                key_value = i;
-                key_pressed = 1;
-                break;
+                return;
+            }
+
+            if (event.type == SDL_KEYDOWN)
+            {
+                SDL_Scancode scancode = event.key.keysym.scancode;
+
+                // Find which CHIP8 key was pressed
+                for (int i = 0; i < CHIP8_KEY_COUNT; i++)
+                {
+                    if (scancode == keymap[i])
+                    {
+                        registers[X] = i;
+                        key_pressed = true;
+                        break;
+                    }
+                }
             }
         }
+        SDL_Delay(1);
     }
-
-    registers[X] = key_value;
 }
 
 void instruction0x29(uint16_t *I, uint16_t X, uint8_t *registers){    
